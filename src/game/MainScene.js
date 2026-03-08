@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { createQuestionDeck, buildQuestionPrompt } from "./data/wordBank";
+import { createQuestionDeck, buildQuestionPrompt, QUESTION_BANKS } from "./data/wordBank";
 import { AudioManager } from "./audio/audioManager";
 import { FxManager } from "./fx/fxManager";
 import { QuestionPresenter } from "./ui/questionPresenter";
@@ -11,6 +11,7 @@ import {
 } from "./characters/characterAnimator";
 
 const PROGRESS_KEY = "hero_runner_progress_v1";
+const MAX_LEVEL = 10;
 const STYLE_UNLOCKS = {
   orange_star: 0,
   red_royal: 3,
@@ -135,11 +136,19 @@ export default class MainScene extends Phaser.Scene {
     const height = this.scale.height;
 
     const progress = this.loadProgress();
-    this.level = progress.level ?? 1;
+    this.level = Phaser.Math.Clamp(progress.level ?? 1, 1, MAX_LEVEL);
+    this.maxUnlockedLevel = Phaser.Math.Clamp(
+      Math.max(this.level, progress.maxUnlockedLevel ?? 1),
+      1,
+      MAX_LEVEL
+    );
     this.roundWinsTotal = progress.roundWinsTotal ?? 0;
     this.unlockedStyles = progress.unlockedStyles ?? ["orange_star"];
     this.activeStyle = progress.activeStyle ?? "orange_star";
     this.worldBadges = Array.isArray(progress.worldBadges) ? progress.worldBadges : [];
+    this.questionCategory = progress.questionCategory ?? "verbs";
+    this.bgmMuted = Boolean(progress.bgmMuted);
+    this.clipsMuted = Boolean(progress.clipsMuted);
     this.applyStyleUnlocks();
     this.backfillWorldBadges();
 
@@ -160,6 +169,8 @@ export default class MainScene extends Phaser.Scene {
     this.jumpCount = 0;
 
     this.state = "running";
+    this.previousStateBeforePause = null;
+    this.isPaused = false;
     this.questionTriggered = false;
     this.shouldAskQuestion = true;
     this.obstaclesSinceQuestion = 0;
@@ -169,13 +180,15 @@ export default class MainScene extends Phaser.Scene {
     this.coinsCollected = 0;
     this.correctStreak = 0;
 
-    this.questionPool = createQuestionDeck();
+    this.questionPool = createQuestionDeck(this.questionCategory);
 
     this.audio = new AudioManager();
+    this.audio.setBgmMuted(this.bgmMuted);
+    this.audio.setClipsMuted(this.clipsMuted);
     this.fx = new FxManager(this);
     this.enableAudioBridge = () => {
       const ok = this.audio.forceEnableFromGesture();
-      this.audio.startBackgroundMusic();
+      this.syncBackgroundMusic();
       return ok;
     };
     window.__heroEnableAudio = this.enableAudioBridge;
@@ -194,7 +207,9 @@ export default class MainScene extends Phaser.Scene {
     this.createGroundMarkers(width);
 
     const groundTop = this.ground.getTopCenter().y;
-    this.hero = this.physics.add.image(150, groundTop - 39, "heroBody").setDepth(2);
+    this.hero = this.physics.add
+      .image(this.getRunnerStartX(width), groundTop - 39, "heroBody")
+      .setDepth(2);
     this.hero.setCollideWorldBounds(true);
     this.physics.add.collider(this.hero, this.ground);
 
@@ -242,12 +257,19 @@ export default class MainScene extends Phaser.Scene {
         strokeThickness: 4,
       })
       .setDepth(50);
+    this.createCategorySwitchUI(width);
+    this.createGameControlUI(width);
+    this.createAudioToggleUI(width);
+    this.createLevelSelectUI(width);
+    this.refreshHudTypography();
     this.updateHudTexts();
     this.createBuildProjectUI(width, height);
 
     this.createRoundWinUI(width, height);
 
     this.input.on("pointerdown", (pointer) => {
+      const now = this.time?.now ?? performance.now();
+      if (this.uiTapBlockUntil && now < this.uiTapBlockUntil) return;
       if (this.state === "question" && this.questionUI && !this.questionUI.isLocked) {
         const option =
           this.questionUI.pickOptionAtGamePoint(pointer.x, pointer.y) ??
@@ -267,13 +289,27 @@ export default class MainScene extends Phaser.Scene {
     this.scale.on("resize", this.handleResize, this);
   }
 
+  getQuestionModeByLevel() {
+    return this.level <= 3 ? "mcq" : "spelling";
+  }
+
+  getSpellingDifficultyForLevel(level) {
+    if (level <= 3) return { prefillCount: 3, tileCount: 8 };
+    if (level <= 5) return { prefillCount: 3, tileCount: 8 };
+    if (level <= 8) return { prefillCount: 2, tileCount: 9 };
+    if (level <= 10) return { prefillCount: 2, tileCount: 10 };
+    return { prefillCount: 1, tileCount: 10 };
+  }
+
   installAudioLifecycleHooks() {
     this.ensureAudioHandler = () => {
       this.audio.unlock();
-      this.audio.startBackgroundMusic();
+      this.syncBackgroundMusic();
     };
 
     this.windowGameplayTapHandler = (event) => {
+      const now = this.time?.now ?? performance.now();
+      if (this.uiTapBlockUntil && now < this.uiTapBlockUntil) return;
       this.ensureAudioHandler();
 
       if (this.state === "question" && this.questionUI && !this.questionUI.isLocked) {
@@ -322,7 +358,7 @@ export default class MainScene extends Phaser.Scene {
         return;
       }
       this.audio.unlock();
-      this.audio.startBackgroundMusic();
+      this.syncBackgroundMusic();
       if (this.state === "question" && this.currentQuestion) {
         this.audio.speakQuestionPromptReliable(this.currentQuestion, 1);
       }
@@ -342,14 +378,24 @@ export default class MainScene extends Phaser.Scene {
     });
   }
 
+  syncBackgroundMusic() {
+    if (!this.audio) return;
+    if (this.state === "question") {
+      this.audio.stopBackgroundMusic();
+      return;
+    }
+    this.audio.startBackgroundMusic();
+  }
+
   tryPlayerJump() {
     this.audio.unlock();
-    this.audio.startBackgroundMusic();
+    this.syncBackgroundMusic();
 
     if (this.state !== "running") return;
     if (this.jumpCount >= 2) return;
 
     const now = this.time?.now ?? performance.now();
+    if (this.uiTapBlockUntil && now < this.uiTapBlockUntil) return;
     if (this.lastJumpInputAt && now - this.lastJumpInputAt < 90) return;
     this.lastJumpInputAt = now;
 
@@ -509,6 +555,397 @@ export default class MainScene extends Phaser.Scene {
       const prefix = this.isShowtime ? "Showtime" : "Stage";
       this.showtimeText.setText(`${prefix} Stars: ${this.showStars}/${this.showStarsTarget}`);
     }
+    this.refreshModeButtons();
+  }
+
+  createCategorySwitchUI(width) {
+    this.modeControl = this.add.container(0, 0).setDepth(56);
+    this.modeButtons = [];
+
+    const defs = [
+      { key: "verbs", label: "Verbs" },
+      { key: "adjectives", label: "Adj" },
+      { key: "random", label: "Random" },
+    ];
+
+    defs.forEach((def, idx) => {
+      const x = idx * 96;
+      const bg = this.add
+        .rectangle(x, 0, 90, 38, 0x17324b, 0.95)
+        .setStrokeStyle(2, 0xffffff, 0.8)
+        .setInteractive({ useHandCursor: true });
+      const txt = this.add
+        .text(x, 0, def.label, {
+          fontSize: "18px",
+          color: "#ffffff",
+          fontStyle: "bold",
+        })
+        .setOrigin(0.5);
+      bg.on("pointerdown", () => {
+        const now = this.time?.now ?? performance.now();
+        this.uiTapBlockUntil = now + 220;
+        this.setQuestionCategory(def.key);
+      });
+      this.modeControl.add([bg, txt]);
+      this.modeButtons.push({ key: def.key, bg, txt });
+    });
+
+    this.repositionModeControl(width);
+    this.refreshModeButtons();
+  }
+
+  createGameControlUI(width) {
+    this.controlBar = this.add.container(0, 0).setDepth(56);
+    this.pauseControl = this.createRoundIconButton("⏸", 0x455a64, () => this.togglePause());
+    this.restartControl = this.createRoundIconButton("↺", 0xd84315, () => this.restartCurrentRun());
+    this.levelOneControl = this.createRoundIconButton("L1", 0x1565c0, () => this.startFromLevelOne());
+    this.controlBar.add([
+      this.pauseControl.bg,
+      this.pauseControl.icon,
+      this.restartControl.bg,
+      this.restartControl.icon,
+      this.levelOneControl.bg,
+      this.levelOneControl.icon,
+    ]);
+    this.repositionControlBar(width);
+  }
+
+  createRoundIconButton(iconText, fillColor, onPress) {
+    const bg = this.add
+      .rectangle(0, 0, 54, 42, fillColor, 0.98)
+      .setDepth(56)
+      .setStrokeStyle(3, 0xffffff, 0.92)
+      .setInteractive({ useHandCursor: true });
+    bg.setRounded?.(12);
+    const icon = this.add
+      .text(0, 0, iconText, {
+        fontSize: "22px",
+        color: "#ffffff",
+        fontStyle: "bold",
+      })
+      .setOrigin(0.5)
+      .setDepth(57);
+    bg.on("pointerdown", onPress);
+    return { bg, icon };
+  }
+
+  repositionControlBar(width) {
+    if (!this.pauseControl || !this.restartControl || !this.levelOneControl) return;
+    const compact = this.getCompactMobileLayout();
+    const right = width - 44;
+    const y = compact ? 38 : 42;
+    const gap = compact ? 60 : 62;
+    this.pauseControl.bg.setPosition(right - gap * 2, y);
+    this.pauseControl.icon.setPosition(right - gap * 2, y);
+    this.restartControl.bg.setPosition(right - gap, y);
+    this.restartControl.icon.setPosition(right - gap, y);
+    this.levelOneControl.bg.setPosition(right, y);
+    this.levelOneControl.icon.setPosition(right, y);
+  }
+
+  repositionModeControl(width) {
+    if (!this.modeControl) return;
+    const compact = this.getCompactMobileLayout();
+    const buttonWidth = compact ? 76 : 90;
+    const buttonHeight = compact ? 34 : 38;
+    const spacing = compact ? 82 : 96;
+    this.modeButtons.forEach((item, idx) => {
+      item.bg.setPosition(idx * spacing, 0).setSize(buttonWidth, buttonHeight);
+      item.txt.setPosition(idx * spacing, 0);
+      item.txt.setFontSize(compact ? 16 : 18);
+    });
+    const panelWidth = spacing * (this.modeButtons.length - 1) + buttonWidth;
+    this.modeControl.setPosition(width - panelWidth - 24, compact ? 152 : 92);
+  }
+
+  createAudioToggleUI(width) {
+    this.audioToggleBar = this.add.container(0, 0).setDepth(56);
+    const createToggle = () => {
+      const bg = this.add
+        .rectangle(0, 0, 126, 34, 0x17324b, 0.95)
+        .setStrokeStyle(2, 0xffffff, 0.85)
+        .setInteractive({ useHandCursor: true });
+      const txt = this.add
+        .text(0, 0, "", {
+          fontSize: "15px",
+          color: "#ffffff",
+          fontStyle: "bold",
+        })
+        .setOrigin(0.5);
+      return { bg, txt };
+    };
+
+    this.clipsToggle = createToggle();
+    this.bgmToggle = createToggle();
+    this.clipsToggle.bg.on("pointerdown", () => this.toggleClipsMuted());
+    this.bgmToggle.bg.on("pointerdown", () => this.toggleBgmMuted());
+    this.audioToggleBar.add([this.clipsToggle.bg, this.clipsToggle.txt, this.bgmToggle.bg, this.bgmToggle.txt]);
+    this.repositionAudioToggleUI(width);
+    this.refreshAudioToggleButtons();
+  }
+
+  repositionAudioToggleUI(width) {
+    if (!this.audioToggleBar || !this.clipsToggle || !this.bgmToggle) return;
+    const compact = this.getCompactMobileLayout();
+    const x = width - (compact ? 176 : 304);
+    const y = compact ? 188 : 146;
+    const gap = compact ? 112 : 132;
+    this.audioToggleBar.setPosition(x, y);
+    this.clipsToggle.bg.setPosition(0, 0).setSize(compact ? 106 : 126, compact ? 30 : 34);
+    this.clipsToggle.txt.setPosition(0, 0).setFontSize(compact ? 13 : 15);
+    this.bgmToggle.bg.setPosition(gap, 0).setSize(compact ? 106 : 126, compact ? 30 : 34);
+    this.bgmToggle.txt.setPosition(gap, 0).setFontSize(compact ? 13 : 15);
+  }
+
+  refreshAudioToggleButtons() {
+    if (!this.clipsToggle || !this.bgmToggle) return;
+    const clipsOn = !this.clipsMuted;
+    const musicOn = !this.bgmMuted;
+
+    this.clipsToggle.txt.setText(clipsOn ? "Clips: On" : "Clips: Off");
+    this.clipsToggle.bg.setFillStyle(clipsOn ? 0x2e7d32 : 0x546e7a, 0.96);
+    this.clipsToggle.bg.setStrokeStyle(2, clipsOn ? 0xb2ff59 : 0xffffff, 0.92);
+
+    this.bgmToggle.txt.setText(musicOn ? "Music: On" : "Music: Off");
+    this.bgmToggle.bg.setFillStyle(musicOn ? 0x1565c0 : 0x546e7a, 0.96);
+    this.bgmToggle.bg.setStrokeStyle(2, musicOn ? 0x90caf9 : 0xffffff, 0.92);
+  }
+
+  toggleClipsMuted() {
+    this.clipsMuted = !this.clipsMuted;
+    this.audio.setClipsMuted(this.clipsMuted);
+    this.refreshAudioToggleButtons();
+    this.saveProgress();
+  }
+
+  toggleBgmMuted() {
+    this.bgmMuted = !this.bgmMuted;
+    this.audio.setBgmMuted(this.bgmMuted);
+    this.syncBackgroundMusic();
+    this.refreshAudioToggleButtons();
+    this.saveProgress();
+  }
+
+  refreshModeButtons() {
+    if (!this.modeButtons?.length) return;
+    this.modeButtons.forEach((item) => {
+      const active = item.key === this.questionCategory;
+      item.bg.setFillStyle(active ? 0xff8f00 : 0x17324b, 0.96);
+      item.bg.setStrokeStyle(active ? 3 : 2, active ? 0xffe082 : 0xffffff, 0.9);
+      item.txt.setColor(active ? "#fff8e1" : "#ffffff");
+    });
+  }
+
+  createLevelSelectUI(width) {
+    this.levelChipContainer?.destroy(true);
+    this.levelChipContainer = this.add.container(0, 0).setDepth(57);
+    this.levelLineDecor = [];
+    this.levelChips = [];
+    this.levelTitle = this.add
+      .text(0, 0, "LEVEL PATH", {
+        fontSize: "17px",
+        color: "#ffffff",
+        fontStyle: "bold",
+      })
+      .setOrigin(0.5)
+      .setDepth(57);
+    this.levelChipContainer.add(this.levelTitle);
+
+    for (let level = 1; level <= MAX_LEVEL; level += 1) {
+      const chip = this.add
+        .circle(0, 0, 18, 0x10243c, 0.98)
+        .setStrokeStyle(3, 0xffffff, 0.92)
+        .setInteractive({ useHandCursor: true });
+      const label = this.add
+        .text(0, 0, `${level}`, {
+          fontSize: "15px",
+          color: "#ffffff",
+          fontStyle: "bold",
+        })
+        .setOrigin(0.5);
+      const stateDot = this.add.circle(0, 0, 7, 0xb0bec5, 1).setStrokeStyle(1, 0xffffff, 0.9);
+      const stateLabel = this.add
+        .text(0, 0, "", {
+          fontSize: "10px",
+          color: "#ffffff",
+          fontStyle: "bold",
+        })
+        .setOrigin(0.5);
+
+      const item = { level, chip, label, stateDot, stateLabel };
+      chip.on("pointerdown", () => {
+        if (level > this.maxUnlockedLevel || this.state === "roundWin") return;
+        this.startLevelRun(level);
+      });
+      this.levelChips.push(item);
+      this.levelChipContainer.add([chip, label, stateDot, stateLabel]);
+      if (level < MAX_LEVEL) {
+        const link = this.add.rectangle(0, 0, 22, 4, 0xffffff, 0.55).setDepth(56);
+        this.levelLineDecor.push(link);
+        this.levelChipContainer.add(link);
+      }
+    }
+
+    this.layoutLevelChips(width);
+    this.refreshLevelChipStates();
+  }
+
+  layoutLevelChips(width) {
+    if (!this.levelChips?.length) return;
+    const compact = this.getCompactMobileLayout();
+    const cols = compact ? 5 : 10;
+    const chipGapX = compact ? 50 : 44;
+    const chipGapY = compact ? 38 : 0;
+    const totalW = (cols - 1) * chipGapX;
+    const startX = Math.max(16, Math.floor((width - totalW) / 2));
+    const startY = compact ? 74 : 88;
+
+    this.levelTitle.setPosition(startX + totalW * 0.5, startY - 28);
+
+    this.levelChips.forEach((item, idx) => {
+      const row = Math.floor(idx / cols);
+      const col = idx % cols;
+      const x = startX + col * chipGapX;
+      const y = startY + row * chipGapY;
+      item.chip.setPosition(x, y);
+      item.chip.setRadius(compact ? 17 : 18);
+      item.label.setPosition(x, y);
+      item.label.setFontSize(compact ? 14 : 15);
+      item.stateDot.setPosition(x + 14, y - 14);
+      item.stateLabel.setPosition(x + 14, y - 14);
+
+      if (idx < this.levelLineDecor.length) {
+        const nextSameRow = Math.floor((idx + 1) / cols) === row;
+        const link = this.levelLineDecor[idx];
+        link.setVisible(nextSameRow);
+        if (nextSameRow) {
+          link.setPosition(x + chipGapX * 0.5, y);
+          link.width = chipGapX - 24;
+        }
+      }
+    });
+  }
+
+  refreshLevelChipStates() {
+    if (!this.levelChips?.length) return;
+    this.levelChips.forEach((item) => {
+      const isUnlocked = item.level <= this.maxUnlockedLevel;
+      const isCurrent = item.level === this.level;
+      item.stateDot.setFillStyle(isUnlocked ? 0x43a047 : 0xc62828, 1);
+      item.stateLabel.setText(isUnlocked ? "✓" : "✕");
+      item.chip.setFillStyle(isCurrent ? 0xef6c00 : isUnlocked ? 0x1e88e5 : 0x455a64, 0.98);
+      item.chip.setStrokeStyle(isCurrent ? 3 : 2, isCurrent ? 0xfff59d : 0xffffff, 0.95);
+      item.label.setColor(isUnlocked ? "#ffffff" : "#d0d0d0");
+    });
+  }
+
+  refreshHudTypography() {
+    const compact = this.getCompactMobileLayout();
+    this.coinText.setFontSize(compact ? 22 : 30);
+    this.streakText.setFontSize(compact ? 22 : 26);
+    this.badgeText.setFontSize(compact ? 17 : 22);
+    this.showtimeText.setFontSize(compact ? 16 : 20);
+    this.coinText.setPosition(14, compact ? 12 : 20);
+    this.streakText.setPosition(14, compact ? 38 : 62);
+    this.badgeText.setPosition(14, compact ? 62 : 98);
+    this.showtimeText.setPosition(14, compact ? 84 : 132);
+  }
+
+  togglePause() {
+    if (this.state === "roundWin") return;
+    if (!this.isPaused) {
+      this.previousStateBeforePause = this.state;
+      this.isPaused = true;
+      this.state = "paused";
+      if (this.obstacle) this.obstacle.setVelocityX(0);
+      if (this.coin) this.coin.setVelocityX(0);
+      this.audio.stopActionCueLoop();
+      this.audio.stopSpeech();
+      this.audio.stopBackgroundMusic();
+      this.pauseControl?.icon?.setText("▶");
+      this.fx.floatPraise(this.scale.width / 2, 90, "Paused");
+      return;
+    }
+
+    this.isPaused = false;
+    this.state = this.previousStateBeforePause ?? "running";
+    if (this.state === "running") {
+      if (this.obstacle) this.obstacle.setVelocityX(-this.gameSpeed);
+      if (this.coin) this.coin.setVelocityX(-this.gameSpeed);
+    }
+    this.pauseControl?.icon?.setText("⏸");
+    this.syncBackgroundMusic();
+  }
+
+  restartCurrentRun() {
+    const ok = window.confirm("Restart this run?");
+    if (!ok) return;
+    this.startLevelRun(this.level);
+  }
+
+  startLevelRun(targetLevel) {
+    this.level = Phaser.Math.Clamp(targetLevel ?? this.level, 1, this.maxUnlockedLevel);
+    this.isPaused = false;
+    this.pauseControl?.icon?.setText("⏸");
+    this.hideQuestion();
+    this.state = "running";
+    this.questionTriggered = false;
+    this.shouldAskQuestion = true;
+    this.obstaclesSinceQuestion = 0;
+    this.obstaclesUntilQuestion = Phaser.Math.Between(3, 6);
+    this.correctStreak = 0;
+    this.coinsCollected = 0;
+    this.coinText.setText("Coins: 0");
+    this.missionProgress = 0;
+    this.correctInRound = 0;
+    this.stopShowtimeMode();
+    this.renderBuildProgress(false);
+    this.updateHudTexts();
+    this.baseSpeed = this.getSpeedForLevel(this.level);
+    this.gameSpeed = this.baseSpeed;
+    this.createBackground(this.scale.width, this.scale.height);
+    this.createBuildProjectUI(this.scale.width, this.scale.height);
+    this.syncBackgroundMusic();
+    this.spawnObstacle();
+    this.spawnCoin();
+    this.refreshLevelChipStates();
+    this.refreshHudTypography();
+    this.saveProgress();
+  }
+
+  startFromLevelOne() {
+    const ok = window.confirm("Start again from Level 1?");
+    if (!ok) return;
+    this.startLevelRun(1);
+  }
+
+  toggleQuestionCategory() {
+    const order = ["verbs", "adjectives", "random"];
+    const currentIdx = Math.max(0, order.indexOf(this.questionCategory));
+    const next = order[(currentIdx + 1) % order.length];
+    this.setQuestionCategory(next);
+  }
+
+  setQuestionCategory(next) {
+    const nextBank =
+      next === "random" ? [...(QUESTION_BANKS.verbs ?? []), ...(QUESTION_BANKS.adjectives ?? [])] : QUESTION_BANKS[next] ?? [];
+    if (nextBank.length === 0) {
+      this.fx.floatPraise(this.scale.width / 2, 110, "No words yet");
+      return;
+    }
+
+    this.questionCategory = next;
+    this.questionPool = createQuestionDeck(this.questionCategory);
+    this.lastQuestionSubject = null;
+    this.updateHudTexts();
+    this.saveProgress();
+    const label =
+      this.questionCategory === "adjectives"
+        ? "Adjectives"
+        : this.questionCategory === "random"
+          ? "Random"
+          : "Verbs";
+    this.fx.floatPraise(this.scale.width * 0.75, 110, label);
   }
 
   refreshShowtimeVisuals() {
@@ -999,8 +1436,10 @@ export default class MainScene extends Phaser.Scene {
 
   startNextRound(levelUp) {
     const previousLevel = this.level;
-    if (levelUp) {
-      this.level = Math.min(this.level + 1, 99);
+    const shouldLevelUp = levelUp && this.level < MAX_LEVEL;
+    if (shouldLevelUp) {
+      this.level = Math.min(this.level + 1, MAX_LEVEL);
+      this.maxUnlockedLevel = Math.min(MAX_LEVEL, Math.max(this.maxUnlockedLevel, this.level));
       if (this.level % 5 === 0) {
         this.unlockWorldBadge(this.level);
       }
@@ -1009,7 +1448,7 @@ export default class MainScene extends Phaser.Scene {
     this.correctInRound = 0;
     this.showStars = 0;
     this.stopShowtimeMode(false);
-    if (!levelUp) {
+    if (!shouldLevelUp) {
       this.missionProgress = 0;
       this.renderBuildProgress(false);
     }
@@ -1032,7 +1471,7 @@ export default class MainScene extends Phaser.Scene {
       this.fx.floatPraise(this.scale.width * 0.72, 120, `Level ${this.level}`);
     }
 
-    if (levelUp && this.missionProgress >= this.missionTarget) {
+    if (shouldLevelUp && this.missionProgress >= this.missionTarget) {
       this.startShowtimeMode();
     }
 
@@ -1040,11 +1479,17 @@ export default class MainScene extends Phaser.Scene {
     this.spawnCoin();
     this.state = "running";
     this.updateHudTexts();
+    this.refreshLevelChipStates();
     this.saveProgress();
   }
 
   updateLevelUpButtonState() {
     if (!this.levelUpBtn?.txt || !this.levelUpBtn?.bg) return;
+    if (this.level >= MAX_LEVEL) {
+      this.levelUpBtn.txt.setText("Max Level");
+      this.levelUpBtn.bg.setFillStyle(0x6d4c41, 1);
+      return;
+    }
     this.levelUpBtn.txt.setText("Level Up");
     this.levelUpBtn.bg.setFillStyle(0xef6c00, 1);
   }
@@ -1082,27 +1527,41 @@ export default class MainScene extends Phaser.Scene {
       if (!raw) {
         return {
           level: 1,
+          maxUnlockedLevel: 1,
           roundWinsTotal: 0,
           unlockedStyles: ["orange_star"],
           activeStyle: "orange_star",
           worldBadges: [],
+          questionCategory: "verbs",
+          bgmMuted: false,
+          clipsMuted: false,
         };
       }
       const parsed = JSON.parse(raw);
+      const safeLevel = Phaser.Math.Clamp(parsed.level ?? 1, 1, MAX_LEVEL);
+      const safeUnlocked = Phaser.Math.Clamp(parsed.maxUnlockedLevel ?? safeLevel ?? 1, 1, MAX_LEVEL);
       return {
-        level: parsed.level ?? 1,
+        level: safeLevel,
+        maxUnlockedLevel: Math.max(safeLevel, safeUnlocked),
         roundWinsTotal: parsed.roundWinsTotal ?? 0,
         unlockedStyles: Array.isArray(parsed.unlockedStyles) ? parsed.unlockedStyles : ["orange_star"],
         activeStyle: parsed.activeStyle ?? "orange_star",
         worldBadges: Array.isArray(parsed.worldBadges) ? parsed.worldBadges : [],
+        questionCategory: parsed.questionCategory ?? "verbs",
+        bgmMuted: Boolean(parsed.bgmMuted),
+        clipsMuted: Boolean(parsed.clipsMuted),
       };
     } catch {
       return {
         level: 1,
+        maxUnlockedLevel: 1,
         roundWinsTotal: 0,
         unlockedStyles: ["orange_star"],
         activeStyle: "orange_star",
         worldBadges: [],
+        questionCategory: "verbs",
+        bgmMuted: false,
+        clipsMuted: false,
       };
     }
   }
@@ -1113,10 +1572,14 @@ export default class MainScene extends Phaser.Scene {
         PROGRESS_KEY,
         JSON.stringify({
           level: this.level,
+          maxUnlockedLevel: Phaser.Math.Clamp(this.maxUnlockedLevel, 1, MAX_LEVEL),
           roundWinsTotal: this.roundWinsTotal,
           unlockedStyles: this.unlockedStyles,
           activeStyle: this.activeStyle,
           worldBadges: this.worldBadges,
+          questionCategory: this.questionCategory,
+          bgmMuted: this.bgmMuted,
+          clipsMuted: this.clipsMuted,
         })
       );
     } catch {
@@ -1195,9 +1658,127 @@ export default class MainScene extends Phaser.Scene {
         decor: "hills",
         obstacleTint: 0x1d2b3a,
       },
+      {
+        sky: 0xffcc80,
+        glowColor: 0xffe0b2,
+        glowAlpha: 0.24,
+        cloudTint: 0xfff3e0,
+        cloudAlpha: 0.6,
+        buildingTint: 0xe5b384,
+        buildingAlphaMin: 0.25,
+        buildingAlphaMax: 0.38,
+        buildingSpeed: 68,
+        decor: "sunset",
+        obstacleTint: 0x4e342e,
+      },
+      {
+        sky: 0xa5d6a7,
+        glowColor: 0xe8f5e9,
+        glowAlpha: 0.18,
+        cloudTint: 0xf1fff1,
+        cloudAlpha: 0.6,
+        buildingTint: 0x8fc79b,
+        buildingAlphaMin: 0.22,
+        buildingAlphaMax: 0.34,
+        buildingSpeed: 64,
+        decor: "trees",
+        obstacleTint: 0x2b3a2f,
+      },
+      {
+        sky: 0x90caf9,
+        glowColor: 0xe3f2fd,
+        glowAlpha: 0.2,
+        cloudTint: 0xffffff,
+        cloudAlpha: 0.66,
+        buildingTint: 0xb8d8ef,
+        buildingAlphaMin: 0.22,
+        buildingAlphaMax: 0.34,
+        buildingSpeed: 70,
+        decor: "hills",
+        obstacleTint: 0x203040,
+      },
+      {
+        sky: 0x0d1b3d,
+        glowColor: 0x6c8cff,
+        glowAlpha: 0.14,
+        cloudTint: 0x9db3d4,
+        cloudAlpha: 0.42,
+        buildingTint: 0x7f9bb8,
+        buildingAlphaMin: 0.24,
+        buildingAlphaMax: 0.36,
+        buildingSpeed: 74,
+        decor: "night",
+        obstacleTint: 0xff8a50,
+      },
+      {
+        sky: 0xce93d8,
+        glowColor: 0xf3d6ff,
+        glowAlpha: 0.18,
+        cloudTint: 0xf9ebff,
+        cloudAlpha: 0.55,
+        buildingTint: 0xc7a8d8,
+        buildingAlphaMin: 0.22,
+        buildingAlphaMax: 0.34,
+        buildingSpeed: 69,
+        decor: "hills",
+        obstacleTint: 0x3a2b4a,
+      },
+      {
+        sky: 0x80cbc4,
+        glowColor: 0xb2dfdb,
+        glowAlpha: 0.18,
+        cloudTint: 0xe0f2f1,
+        cloudAlpha: 0.6,
+        buildingTint: 0x8fbab4,
+        buildingAlphaMin: 0.22,
+        buildingAlphaMax: 0.34,
+        buildingSpeed: 66,
+        decor: "trees",
+        obstacleTint: 0x1f3a36,
+      },
+      {
+        sky: 0xffab91,
+        glowColor: 0xffccbc,
+        glowAlpha: 0.24,
+        cloudTint: 0xffe6df,
+        cloudAlpha: 0.6,
+        buildingTint: 0xdba18f,
+        buildingAlphaMin: 0.24,
+        buildingAlphaMax: 0.36,
+        buildingSpeed: 70,
+        decor: "sunset",
+        obstacleTint: 0x4a2a22,
+      },
+      {
+        sky: 0xb39ddb,
+        glowColor: 0xd1c4e9,
+        glowAlpha: 0.18,
+        cloudTint: 0xede7f6,
+        cloudAlpha: 0.56,
+        buildingTint: 0xa79ac5,
+        buildingAlphaMin: 0.22,
+        buildingAlphaMax: 0.34,
+        buildingSpeed: 70,
+        decor: "hills",
+        obstacleTint: 0x30293f,
+      },
+      {
+        sky: 0x9fa8da,
+        glowColor: 0xc5cae9,
+        glowAlpha: 0.16,
+        cloudTint: 0xe8eaf6,
+        cloudAlpha: 0.52,
+        buildingTint: 0x9aa4ca,
+        buildingAlphaMin: 0.22,
+        buildingAlphaMax: 0.35,
+        buildingSpeed: 72,
+        decor: "night",
+        obstacleTint: 0xffb74d,
+      },
     ];
 
-    return themes[(level - 1) % themes.length];
+    const idx = Phaser.Math.Clamp(level, 1, MAX_LEVEL) - 1;
+    return themes[idx % themes.length];
   }
 
   getObstacleTint(textureKey) {
@@ -1322,7 +1903,10 @@ export default class MainScene extends Phaser.Scene {
 
   nextQuestionEntry() {
     if (this.questionPool.length === 0) {
-      this.questionPool = createQuestionDeck();
+      this.questionPool = createQuestionDeck(this.questionCategory);
+    }
+    if (this.questionPool.length === 0) {
+      return null;
     }
     if (!this.lastQuestionSubject) {
       const first = this.questionPool.pop();
@@ -1338,37 +1922,61 @@ export default class MainScene extends Phaser.Scene {
 
   showQuestion() {
     const entry = this.nextQuestionEntry();
+    if (!entry) {
+      this.state = "running";
+      this.questionTriggered = true;
+      this.shouldAskQuestion = false;
+      return;
+    }
     this.currentQuestion = buildQuestionPrompt(entry);
     this.obstaclesSinceQuestion = 0;
     this.obstaclesUntilQuestion = Phaser.Math.Between(3, 6);
 
     this.state = "question";
+    this.syncBackgroundMusic();
 
     if (this.obstacle) this.obstacle.setVelocityX(0);
     if (this.coin) this.coin.setVelocityX(0);
 
     const rig = createQuestionCharacter(this, this.currentQuestion.subject);
+    rig.container.__hideBadge = true;
     const isMobile = this.getCompactMobileLayout();
-    rig.container.setScale(isMobile ? 0.62 : 1.25);
-    animateQuestionCharacter(this, rig, this.currentQuestion.correctAnswer);
+    let questionScale = isMobile ? 0.62 : 1.25;
+    if (this.currentQuestion.category === "adjectives") {
+      const isSizeCompare = ["big", "small", "tall", "short"].includes(this.currentQuestion.correctAnswer);
+      if (!isSizeCompare) {
+        questionScale *= 0.86;
+      }
+    }
+    rig.container.setScale(questionScale);
+    animateQuestionCharacter(this, rig, this.currentQuestion.correctAnswer, this.currentQuestion.category);
     this.questionUI.setCharacter(rig.container);
+    const questionMode = this.getQuestionModeByLevel();
+    const questionModeConfig =
+      questionMode === "spelling" ? this.getSpellingDifficultyForLevel(this.level) : { prefillCount: 3, tileCount: 8 };
 
     this.questionUI.show(this.currentQuestion, {
       onSelect: (option) => this.handleOptionTap(option),
       onPreview: (option) => {
-        this.audio.unlock();
-        this.audio.stopSpeech();
-        this.audio.speakWord(option.value);
+        // Keep the question's target action cue stable during the full question phase.
+        if (!option) return;
       },
       onReplay: () => {
         this.audio.unlock();
         this.audio.stopSpeech();
         this.audio.speakQuestionPrompt(this.currentQuestion);
       },
-    });
+      onSpellSubmit: ({ usedHint }) => this.handleSpellingSubmit({ usedHint }),
+      onSpellWrong: () => this.handleSpellingWrong(),
+    }, questionMode, questionModeConfig);
 
     this.audio.unlock();
     this.audio.stopSpeech();
+    this.audio.startActionCueLoop(
+      this.currentQuestion.correctAnswer,
+      this.currentQuestion?.category ?? this.questionCategory,
+      560
+    );
     this.audio.speakQuestionPromptReliable(this.currentQuestion, 2);
   }
 
@@ -1378,6 +1986,8 @@ export default class MainScene extends Phaser.Scene {
     this.state = "hit";
     this.audio.unlock();
     this.audio.playHit();
+    this.hero.setVelocityX(0);
+    this.hero.x = this.getRunnerStartX(this.scale.width);
     this.cameras.main.shake(200, 0.005);
 
     const previousProgress = this.missionProgress;
@@ -1434,6 +2044,8 @@ export default class MainScene extends Phaser.Scene {
     this.ground.setDisplaySize(width + 20, this.getGroundHeight());
     this.ground.refreshBody();
 
+    const runnerX = this.getRunnerStartX(width);
+    this.hero.x = runnerX;
     if (this.hero.body.blocked.down) {
       this.hero.y = this.ground.getTopCenter().y - this.hero.displayHeight / 2;
     } else {
@@ -1462,10 +2074,12 @@ export default class MainScene extends Phaser.Scene {
       this.coin.y = Phaser.Math.Clamp(this.coin.y + deltaY, 70, this.ground.getTopCenter().y - 150);
     }
 
-    this.coinText.setPosition(20, 20);
-    this.streakText.setPosition(20, 62);
-    this.badgeText.setPosition(20, 98);
-    this.showtimeText.setPosition(20, 132);
+    this.refreshHudTypography();
+    this.repositionModeControl(width);
+    this.repositionControlBar(width);
+    this.repositionAudioToggleUI(width);
+    this.layoutLevelChips(width);
+    this.refreshLevelChipStates();
     if (this.buildSite) {
       this.createBuildProjectUI(width, height);
     }
@@ -1501,6 +2115,7 @@ export default class MainScene extends Phaser.Scene {
   }
 
   hideQuestion() {
+    this.audio.stopActionCueLoop();
     this.questionUI.hide();
   }
 
@@ -1509,51 +2124,80 @@ export default class MainScene extends Phaser.Scene {
 
     this.audio.unlock();
     this.audio.stopSpeech();
-    this.audio.speakWord(option.value);
+    this.audio.startActionCueLoop(
+      this.currentQuestion.correctAnswer,
+      this.currentQuestion?.category ?? this.questionCategory,
+      560
+    );
 
     if (option.value === this.currentQuestion.correctAnswer) {
       this.questionUI.setLocked(true);
       this.questionUI.markCorrect(option);
-      this.audio.playCorrect();
-      this.correctStreak += 1;
-      this.wrongAnswerStreak = 0;
-      this.correctInRound += 1;
-      const wasStageComplete = this.missionProgress >= this.missionTarget;
-      this.missionProgress = Math.min(this.missionTarget, this.missionProgress + 1);
-      this.renderBuildProgress(true);
-      const isStageComplete = this.missionProgress >= this.missionTarget;
-      if (!wasStageComplete && isStageComplete) {
-        this.startShowtimeMode();
-      } else if (this.isShowtime) {
-        this.showStars = Math.min(this.showStarsTarget, this.showStars + 1);
-        this.fx.floatPraise(this.scale.width * 0.72, 118, `Star ${this.showStars}!`);
-      }
-      this.updateHudTexts();
-      this.fx.pulseText(this.streakText);
       const optionPos = this.questionUI.getOptionWorldPosition(option);
       this.fx.celebrateAt(optionPos.x, optionPos.y);
-      this.fx.floatPraise(this.scale.width / 2, this.scale.height / 2 - 190, this.correctStreak >= 3 ? "Awesome!" : "Great!");
-      this.fx.celebrateAt(this.scale.width / 2, 36);
-
-      if (this.isShowtime && this.showStars >= this.showStarsTarget) {
-        this.time.delayedCall(500, () => this.showRoundWin());
-        return;
-      }
-
-      this.time.delayedCall(520, () => {
-        this.hideQuestion();
-        this.state = "running";
-        this.gameSpeed = 120;
-        this.rampDelay = 800;
-        this.questionTriggered = true;
-        if (this.obstacle) this.obstacle.setVelocityX(-this.gameSpeed);
-        if (this.coin) this.coin.setVelocityX(-this.gameSpeed);
-      });
-
+      this.resolveQuestionCorrect(false);
       return;
     }
 
-    this.questionUI.markWrong(option);
+    this.resolveQuestionWrong(option);
+  }
+
+  handleSpellingSubmit({ usedHint }) {
+    if (this.state !== "question") return;
+    this.resolveQuestionCorrect(Boolean(usedHint));
+  }
+
+  handleSpellingWrong() {
+    if (this.state !== "question") return;
+    this.resolveQuestionWrong(null);
+  }
+
+  resolveQuestionCorrect(usedHint = false) {
+    this.audio.playCorrect();
+    this.correctStreak += 1;
+    this.wrongAnswerStreak = 0;
+    this.correctInRound += 1;
+    this.coinsCollected += usedHint ? 0 : 1;
+    this.coinText.setText(`Coins: ${this.coinsCollected}`);
+    const progressGain = usedHint ? 1 : 2;
+    const wasStageComplete = this.missionProgress >= this.missionTarget;
+    this.missionProgress = Math.min(this.missionTarget, this.missionProgress + progressGain);
+    this.renderBuildProgress(true);
+    const isStageComplete = this.missionProgress >= this.missionTarget;
+    if (!wasStageComplete && isStageComplete) {
+      this.startShowtimeMode();
+    } else if (this.isShowtime) {
+      this.showStars = Math.min(this.showStarsTarget, this.showStars + 1);
+      this.fx.floatPraise(this.scale.width * 0.72, 118, `Star ${this.showStars}!`);
+    }
+    this.updateHudTexts();
+    this.fx.pulseText(this.streakText);
+    this.fx.floatPraise(
+      this.scale.width / 2,
+      this.scale.height / 2 - 190,
+      usedHint ? "Good!" : this.correctStreak >= 3 ? "Awesome!" : "Great!"
+    );
+    this.fx.celebrateAt(this.scale.width / 2, 36);
+
+    if (this.isShowtime && this.showStars >= this.showStarsTarget) {
+      this.time.delayedCall(500, () => this.showRoundWin());
+      return;
+    }
+
+    this.time.delayedCall(520, () => {
+      this.hideQuestion();
+      this.state = "running";
+      this.syncBackgroundMusic();
+      this.gameSpeed = 120;
+      this.rampDelay = 800;
+      this.questionTriggered = true;
+      if (this.obstacle) this.obstacle.setVelocityX(-this.gameSpeed);
+      if (this.coin) this.coin.setVelocityX(-this.gameSpeed);
+    });
+  }
+
+  resolveQuestionWrong(option = null) {
+    if (option) this.questionUI.markWrong(option);
     this.audio.unlock();
     this.audio.playWrong();
     this.correctStreak = 0;
@@ -1578,7 +2222,7 @@ export default class MainScene extends Phaser.Scene {
       this.fx.floatPraise(this.scale.width * 0.72, 118, "Star lost!");
     }
     this.updateHudTexts();
-    this.fx.wrongChoiceFeedback(option.container);
+    if (option) this.fx.wrongChoiceFeedback(option.container);
 
     this.questionUI.setLocked(true);
     const lockDelay = this.wrongAnswerStreak >= 2 ? 950 : 380;
@@ -1588,16 +2232,24 @@ export default class MainScene extends Phaser.Scene {
     }
     this.time.delayedCall(lockDelay, () => {
       this.questionUI.setLocked(false);
-      option.bg.setFillStyle(0xffffff, 0.98);
-      option.bg.setStrokeStyle(4, 0x2c3e50);
+      if (option) {
+        option.bg.setFillStyle(0xffffff, 0.98);
+        option.bg.setStrokeStyle(4, 0x2c3e50);
+      }
     });
   }
 
   update(_, delta) {
+    if (this.isPaused || this.state === "paused") {
+      return;
+    }
+
     const isGrounded = this.hero.body.blocked.down;
     if (isGrounded) {
       this.jumpCount = 0;
     }
+    this.hero.setVelocityX(0);
+    this.hero.x = this.getRunnerStartX(this.scale.width);
 
     this.runnerRig.container.setPosition(this.hero.x, this.hero.y + this.runnerYOffset);
     updateRunnerJumpPose(this.runnerRig, isGrounded);
@@ -1672,6 +2324,10 @@ export default class MainScene extends Phaser.Scene {
 
   getRunnerScale() {
     return this.getCompactMobileLayout() ? 0.82 : 1;
+  }
+
+  getRunnerStartX(width = this.scale.width) {
+    return Phaser.Math.Clamp(Math.round(width * 0.11), 92, 170);
   }
 
   getGroundY(height) {

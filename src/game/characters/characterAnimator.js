@@ -1,4 +1,5 @@
 import Phaser from "phaser";
+import { applyQuestionAction } from "./questionActionSystem";
 
 function addBlink(scene, eyes) {
   if (!eyes || eyes.length === 0) return;
@@ -20,6 +21,7 @@ function addBlink(scene, eyes) {
 }
 
 function addVerbBadge(scene, container, label) {
+  if (container?.__hideBadge) return;
   const badgeBg = scene.add
     .rectangle(0, 0, 86, 26, 0xffb74d, 0.95)
     .setStrokeStyle(2, 0x6d3d00, 1);
@@ -107,19 +109,14 @@ export function updateRunnerJumpPose(rig, isGrounded) {
   rig.container.scaleX = 0.92;
 }
 
-export function animateQuestionCharacter(scene, rig, verb) {
+export function animateQuestionCharacter(scene, rig, verb, category = "verbs") {
   const { container, parts } = rig;
 
-  scene.tweens.add({
-    targets: container,
-    y: container.y - 8,
-    yoyo: true,
-    repeat: -1,
-    duration: 640,
-    ease: "Sine.InOut",
-  });
-
   addBlink(scene, parts.eyes);
+
+  if (applyQuestionAction(scene, rig, verb, category)) {
+    return;
+  }
 
   if (verb === "running") {
     addVerbBadge(scene, container, "RUN");
@@ -168,7 +165,19 @@ export function animateQuestionCharacter(scene, rig, verb) {
 
   if (verb === "sleeping") {
     addVerbBadge(scene, container, "SLEEP");
-    container.angle = -8;
+    const isHuman = Boolean(parts.torso);
+    const bed = scene.add.ellipse(0, 68, 150, 34, 0xb0bec5, 0.9).setStrokeStyle(2, 0x607d8b, 0.9);
+    const pillow = scene.add.ellipse(-52, 52, 42, 20, 0xffffff, 0.95).setStrokeStyle(1, 0xcfd8dc);
+    container.addAt([bed, pillow], 0);
+
+    if (isHuman) {
+      container.angle = 90;
+      container.y += 24;
+    } else {
+      // Animals stay horizontal with only a gentle tilt.
+      container.angle = -8;
+      container.y += 12;
+    }
 
     const sleepText = scene.add
       .text(84, -106, "z z", {
@@ -196,7 +205,7 @@ export function animateQuestionCharacter(scene, rig, verb) {
     addVerbBadge(scene, container, "JUMP");
     scene.tweens.add({
       targets: container,
-      y: container.y - 40,
+      y: { from: container.y + 8, to: container.y - 54 },
       yoyo: true,
       repeat: -1,
       duration: 320,
@@ -204,12 +213,12 @@ export function animateQuestionCharacter(scene, rig, verb) {
     });
 
     scene.tweens.add({
-      targets: container,
-      scaleY: 1.14,
-      scaleX: 0.9,
+      targets: [parts.legL, parts.legR],
+      angle: { from: 0, to: -44 },
       yoyo: true,
       repeat: -1,
       duration: 320,
+      ease: "Sine.InOut",
     });
   }
 
@@ -765,26 +774,30 @@ export function animateQuestionCharacter(scene, rig, verb) {
       .setOrigin(0.5);
     container.add([bowl, bowlRim, kibble, chewText]);
 
-    // Head dips to bowl repeatedly so "eating" is obvious.
-    scene.tweens.add({
-      targets: parts.head,
-      x: parts.head.x - 18,
-      y: parts.head.y + 24,
-      yoyo: true,
-      repeat: -1,
-      duration: 260,
-      ease: "Sine.InOut",
-    });
+    const armRBaseX = parts.armR?.x ?? 22;
+    const armRBaseY = parts.armR?.y ?? 9;
+    if (parts.armR) {
+      scene.tweens.add({
+        targets: parts.armR,
+        x: { from: armRBaseX, to: -2 },
+        y: { from: armRBaseY, to: -18 },
+        angle: { from: 0, to: -46 },
+        yoyo: true,
+        repeat: -1,
+        duration: 280,
+        ease: "Sine.InOut",
+      });
+    }
 
-    // Food visibly moves from bowl to mouth.
+    // Food moves bowl -> mouth with hand motion.
     scene.tweens.add({
       targets: kibble,
-      x: kibble.x - 18,
-      y: kibble.y - 24,
+      x: { from: kibble.x, to: -2 },
+      y: { from: kibble.y, to: -22 },
       alpha: 0.2,
       yoyo: true,
       repeat: -1,
-      duration: 260,
+      duration: 280,
       ease: "Sine.InOut",
     });
 
@@ -886,11 +899,11 @@ export function animateQuestionCharacter(scene, rig, verb) {
 
   if (verb === "reading") {
     addVerbBadge(scene, container, "READ");
-    const bookLeft = scene.add.rectangle(-18, 36, 34, 42, 0x1e88e5).setStrokeStyle(2, 0xffffff);
-    const bookRight = scene.add.rectangle(18, 36, 34, 42, 0x1976d2).setStrokeStyle(2, 0xffffff);
-    const bookFold = scene.add.rectangle(0, 36, 4, 40, 0xffffff, 0.85);
-    const pageLinesL = scene.add.rectangle(-18, 36, 22, 24, 0xe3f2fd, 0.9);
-    const pageLinesR = scene.add.rectangle(18, 36, 22, 24, 0xe3f2fd, 0.9);
+    const bookLeft = scene.add.rectangle(56, 24, 34, 42, 0x1e88e5).setStrokeStyle(2, 0xffffff);
+    const bookRight = scene.add.rectangle(92, 24, 34, 42, 0x1976d2).setStrokeStyle(2, 0xffffff);
+    const bookFold = scene.add.rectangle(74, 24, 4, 40, 0xffffff, 0.85);
+    const pageLinesL = scene.add.rectangle(56, 24, 22, 24, 0xe3f2fd, 0.9);
+    const pageLinesR = scene.add.rectangle(92, 24, 22, 24, 0xe3f2fd, 0.9);
     const readText = scene.add
       .text(96, -30, "Read", {
         fontSize: "24px",
@@ -903,8 +916,12 @@ export function animateQuestionCharacter(scene, rig, verb) {
     container.add([bookLeft, bookRight, pageLinesL, pageLinesR, bookFold, readText]);
 
     if (parts.armL && parts.armR) {
-      parts.armL.angle = 36;
-      parts.armR.angle = -36;
+      parts.armL.x = 30;
+      parts.armL.y = 20;
+      parts.armL.angle = 52;
+      parts.armR.x = 52;
+      parts.armR.y = 22;
+      parts.armR.angle = -14;
     }
 
     if (parts.head) {
@@ -914,7 +931,7 @@ export function animateQuestionCharacter(scene, rig, verb) {
 
     scene.tweens.add({
       targets: [bookLeft, bookRight, pageLinesL, pageLinesR, bookFold],
-      y: 31,
+      y: 20,
       yoyo: true,
       repeat: -1,
       duration: 320,
@@ -1061,6 +1078,7 @@ export function animateQuestionCharacter(scene, rig, verb) {
 
   if (verb === "laughing") {
     addVerbBadge(scene, container, "LAUGH");
+    const laughMouth = scene.add.ellipse(0, -16, 18, 8, 0x3e2723);
     const laughText = scene.add
       .text(90, -40, "Ha!", {
         fontSize: "30px",
@@ -1070,7 +1088,7 @@ export function animateQuestionCharacter(scene, rig, verb) {
         strokeThickness: 4,
       })
       .setOrigin(0.5);
-    container.add(laughText);
+    container.add([laughMouth, laughText]);
 
     scene.tweens.add({
       targets: container,
@@ -1087,6 +1105,14 @@ export function animateQuestionCharacter(scene, rig, verb) {
       yoyo: true,
       repeat: -1,
       duration: 320,
+    });
+    scene.tweens.add({
+      targets: laughMouth,
+      scaleY: { from: 0.8, to: 2.1 },
+      scaleX: { from: 1, to: 1.2 },
+      yoyo: true,
+      repeat: -1,
+      duration: 140,
     });
   }
 }

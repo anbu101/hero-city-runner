@@ -15,6 +15,44 @@ function createTone(context, destination, frequency, durationMs, when, type = "s
   osc.stop(when + durationMs / 1000 + 0.03);
 }
 
+const ACTION_AUDIO_FILES = new Set([
+  "afraid",
+  "barking",
+  "big",
+  "brave",
+  "brushing",
+  "calm",
+  "catching",
+  "climbing",
+  "crying",
+  "dancing",
+  "digging",
+  "drawing",
+  "eating",
+  "fast",
+  "flying",
+  "happy",
+  "hiding",
+  "jumping",
+  "kicking",
+  "laughing",
+  "looking",
+  "reading",
+  "running",
+  "sad",
+  "sleeping",
+  "slow",
+  "small",
+  "smiling",
+  "strong",
+  "tall",
+  "throwing",
+  "walking",
+  "washing",
+  "waving",
+  "weak",
+]);
+
 export class AudioManager {
   constructor() {
     this.ctx = null;
@@ -24,7 +62,14 @@ export class AudioManager {
     this.bgmTimer = null;
     this.bgmStep = 0;
     this.bgmEnabled = false;
+    this.actionCueTimer = null;
     this.isIOS = /iPad|iPhone|iPod/.test(window.navigator.userAgent);
+    this.fileAudioVolume = this.isIOS ? 1 : 0.95;
+    this.actionAudioPlayers = new Map();
+    this.currentActionAudioKey = null;
+    this.lastActionCueAt = 0;
+    this.bgmMuted = false;
+    this.clipsMuted = false;
 
     this.refreshVoices = this.refreshVoices.bind(this);
     this.refreshVoices();
@@ -80,6 +125,7 @@ export class AudioManager {
   }
 
   startBackgroundMusic() {
+    if (this.bgmMuted) return;
     if (this.bgmEnabled) return;
     if (!this.ensureAudioReady()) return;
 
@@ -103,6 +149,76 @@ export class AudioManager {
     if (this.bgmTimer) {
       window.clearInterval(this.bgmTimer);
       this.bgmTimer = null;
+    }
+  }
+
+  setBgmMuted(muted) {
+    this.bgmMuted = Boolean(muted);
+    if (this.bgmMuted) {
+      this.stopBackgroundMusic();
+    }
+  }
+
+  setClipsMuted(muted) {
+    this.clipsMuted = Boolean(muted);
+    if (!this.clipsMuted) return;
+    this.stopSpeech();
+    this.stopActionCueLoop();
+  }
+
+  stopActionCueLoop() {
+    if (this.actionCueTimer) {
+      window.clearInterval(this.actionCueTimer);
+      this.actionCueTimer = null;
+    }
+    if (this.currentActionAudioKey) {
+      const player = this.actionAudioPlayers.get(this.currentActionAudioKey);
+      if (player) {
+        player.pause();
+        player.currentTime = 0;
+      }
+      this.currentActionAudioKey = null;
+    }
+  }
+
+  resolveActionAudioKey(action) {
+    const key = String(action ?? "").toLowerCase();
+    if (key === "talking") return null;
+    return ACTION_AUDIO_FILES.has(key) ? key : null;
+  }
+
+  playActionAudioFile(action) {
+    const key = this.resolveActionAudioKey(action);
+    if (!key) return false;
+
+    let player = this.actionAudioPlayers.get(key);
+    if (!player) {
+      player = new Audio(`/audio/actions-sfx/${key}.mp3`);
+      player.preload = "auto";
+      this.actionAudioPlayers.set(key, player);
+    }
+
+    try {
+      if (this.currentActionAudioKey && this.currentActionAudioKey !== key) {
+        const prev = this.actionAudioPlayers.get(this.currentActionAudioKey);
+        if (prev) {
+          prev.pause();
+          prev.currentTime = 0;
+        }
+      }
+      player.pause();
+      player.currentTime = 0;
+      player.volume = this.fileAudioVolume;
+      const playPromise = player.play();
+      if (playPromise?.catch) {
+        playPromise.catch(() => {
+          // fallback handles playback failure
+        });
+      }
+      this.currentActionAudioKey = key;
+      return true;
+    } catch {
+      return false;
     }
   }
 
@@ -163,6 +279,7 @@ export class AudioManager {
   }
 
   speak(text, config = {}) {
+    if (this.clipsMuted) return Promise.resolve(false);
     if (!window.speechSynthesis || !text) return Promise.resolve(false);
 
     const token = ++this.speechToken;
@@ -234,6 +351,7 @@ export class AudioManager {
   }
 
   playHit() {
+    if (this.clipsMuted) return;
     this.unlock();
     if (!this.ensureAudioReady()) return;
 
@@ -243,6 +361,7 @@ export class AudioManager {
   }
 
   playCorrect() {
+    if (this.clipsMuted) return;
     this.unlock();
     if (!this.ensureAudioReady()) return;
 
@@ -253,6 +372,7 @@ export class AudioManager {
   }
 
   playWrong() {
+    if (this.clipsMuted) return;
     this.unlock();
     if (!this.ensureAudioReady()) return;
 
@@ -262,6 +382,7 @@ export class AudioManager {
   }
 
   playCoin() {
+    if (this.clipsMuted) return;
     this.unlock();
     if (!this.ensureAudioReady()) return;
 
@@ -271,6 +392,7 @@ export class AudioManager {
   }
 
   playJump() {
+    if (this.clipsMuted) return;
     this.unlock();
     if (!this.ensureAudioReady()) return;
 
@@ -281,6 +403,7 @@ export class AudioManager {
   }
 
   playWin() {
+    if (this.clipsMuted) return;
     this.unlock();
     if (!this.ensureAudioReady()) return;
 
@@ -289,5 +412,75 @@ export class AudioManager {
     createTone(this.ctx, this.ctx.destination, 659.25, 100, t + 0.08, "triangle", 0.07);
     createTone(this.ctx, this.ctx.destination, 783.99, 120, t + 0.16, "triangle", 0.07);
     createTone(this.ctx, this.ctx.destination, 1046.5, 150, t + 0.28, "triangle", 0.08);
+  }
+
+  playActionCue(action, category = "verbs") {
+    if (this.clipsMuted) return;
+    const key = String(action ?? "").toLowerCase();
+    if (key === "talking") return;
+
+    const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+    if (now - this.lastActionCueAt >= 170) {
+      const filePlayed = this.playActionAudioFile(action);
+      this.lastActionCueAt = now;
+      if (filePlayed) return;
+    }
+
+    this.unlock();
+    if (!this.ensureAudioReady()) return;
+    const t = this.ctx.currentTime;
+
+    if (category === "adjectives") {
+      if (key === "happy" || key === "smiling") {
+        createTone(this.ctx, this.ctx.destination, 660, 70, t, "triangle", 0.07);
+        createTone(this.ctx, this.ctx.destination, 880, 80, t + 0.08, "triangle", 0.07);
+        return;
+      }
+      if (key === "sad" || key === "crying") {
+        createTone(this.ctx, this.ctx.destination, 420, 120, t, "sine", 0.065);
+        createTone(this.ctx, this.ctx.destination, 300, 130, t + 0.12, "sine", 0.065);
+        return;
+      }
+    }
+
+    switch (key) {
+      case "running":
+      case "walking":
+        createTone(this.ctx, this.ctx.destination, 240, 45, t, "square", 0.065);
+        createTone(this.ctx, this.ctx.destination, 300, 45, t + 0.09, "square", 0.065);
+        break;
+      case "flying":
+        createTone(this.ctx, this.ctx.destination, 560, 120, t, "triangle", 0.07);
+        createTone(this.ctx, this.ctx.destination, 720, 130, t + 0.1, "triangle", 0.07);
+        break;
+      case "laughing":
+        createTone(this.ctx, this.ctx.destination, 520, 60, t, "sine", 0.072);
+        createTone(this.ctx, this.ctx.destination, 620, 60, t + 0.07, "sine", 0.072);
+        createTone(this.ctx, this.ctx.destination, 700, 70, t + 0.14, "sine", 0.072);
+        break;
+      case "smiling":
+        createTone(this.ctx, this.ctx.destination, 740, 70, t, "triangle", 0.072);
+        createTone(this.ctx, this.ctx.destination, 980, 85, t + 0.08, "triangle", 0.072);
+        break;
+      case "talking":
+        createTone(this.ctx, this.ctx.destination, 360, 45, t, "square", 0.06);
+        createTone(this.ctx, this.ctx.destination, 420, 45, t + 0.07, "square", 0.06);
+        break;
+      case "sleeping":
+        createTone(this.ctx, this.ctx.destination, 250, 150, t, "sine", 0.05);
+        break;
+      default:
+        createTone(this.ctx, this.ctx.destination, 600, 60, t, "triangle", 0.05);
+        break;
+    }
+  }
+
+  startActionCueLoop(action, category = "verbs", intervalMs = 520) {
+    if (this.clipsMuted) return;
+    this.stopActionCueLoop();
+    this.playActionCue(action, category);
+    this.actionCueTimer = window.setInterval(() => {
+      this.playActionCue(action, category);
+    }, intervalMs);
   }
 }
