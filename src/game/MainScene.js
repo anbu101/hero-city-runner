@@ -272,11 +272,7 @@ export default class MainScene extends Phaser.Scene {
       const now = this.time?.now ?? performance.now();
       if (this.uiTapBlockUntil && now < this.uiTapBlockUntil) return;
       if (this.state === "question" && this.questionUI && !this.questionUI.isLocked) {
-        const option =
-          this.questionUI.pickOptionAtGamePoint(pointer.x, pointer.y) ??
-          this.questionUI.pickNearestOptionAtGamePoint(pointer.x, pointer.y);
-        if (option) {
-          this.handleOptionTap(option);
+        if (this.questionUI.handleGameTap(pointer.x, pointer.y)) {
           return;
         }
       }
@@ -333,12 +329,8 @@ export default class MainScene extends Phaser.Scene {
         }
 
         if (clientX !== null && clientY !== null) {
-          const option =
-            this.questionUI.pickOptionAtClientPoint(clientX, clientY) ??
-            this.questionUI.pickNearestOptionAtClientPoint(clientX, clientY);
-          if (option) {
+          if (this.questionUI.handleClientTap(clientX, clientY)) {
             this.lastQuestionTapAt = now;
-            this.handleOptionTap(option);
             return;
           }
         }

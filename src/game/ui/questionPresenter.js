@@ -214,6 +214,62 @@ export class QuestionPresenter {
     });
   }
 
+  hitTestAtGamePoint(target, x, y, padX = 0, padY = 0) {
+    if (!target?.visible) return false;
+    const bounds = target.getBounds?.();
+    if (!bounds) return false;
+    return (
+      x >= bounds.x - padX &&
+      x <= bounds.x + bounds.width + padX &&
+      y >= bounds.y - padY &&
+      y <= bounds.y + bounds.height + padY
+    );
+  }
+
+  handleGameTap(x, y) {
+    if (this.questionMode === "spelling") {
+      if (this.hitTestAtGamePoint(this.replayButton, x, y, 10, 10)) {
+        if (this.onReplay) this.onReplay();
+        return true;
+      }
+      if (this.hitTestAtGamePoint(this.hintButton, x, y, 10, 10)) {
+        this.revealHintLetter();
+        return true;
+      }
+      if (this.hitTestAtGamePoint(this.backButton, x, y, 10, 10)) {
+        this.backspaceSpellingLetter();
+        return true;
+      }
+      for (let i = 0; i < this.spellingTiles.length; i += 1) {
+        const tile = this.spellingTiles[i];
+        if (this.hitTestAtGamePoint(tile.box, x, y, 12, 12)) {
+          this.pickSpellingLetter(tile.letter, tile.box);
+          return true;
+        }
+      }
+      return false;
+    }
+
+    const option = this.pickOptionAtGamePoint(x, y) ?? this.pickNearestOptionAtGamePoint(x, y);
+    if (!option || !this.onSelect || this.isLocked) return false;
+    this.onSelect(option);
+    return true;
+  }
+
+  handleClientTap(clientX, clientY) {
+    const canvas = this.scene.sys.game.canvas;
+    if (!canvas) return false;
+
+    const rect = canvas.getBoundingClientRect();
+    if (!rect.width || !rect.height) return false;
+
+    const scaleX = this.scene.scale.width / rect.width;
+    const scaleY = this.scene.scale.height / rect.height;
+    const gameX = (clientX - rect.left) * scaleX;
+    const gameY = (clientY - rect.top) * scaleY;
+    return this.handleGameTap(gameX, gameY);
+  }
+
   buildOptions() {
     for (let i = 0; i < 3; i += 1) {
       this.createOption(0, 0);
@@ -661,7 +717,7 @@ export class QuestionPresenter {
   layoutCompactMobile(tinyLandscapePhone, ultraTinyLandscapePhone, isSpelling) {
     const topY = ultraTinyLandscapePhone ? -this.panel.height * 0.28 : -this.panel.height * 0.26;
     const sentenceY = ultraTinyLandscapePhone ? -this.panel.height * 0.02 : this.panel.height * 0.01;
-    const controlsY = this.panel.height * 0.36;
+    const controlsY = this.panel.height * 0.38;
 
     this.characterSlot.setPosition(0, topY);
     this.characterGroundY = ultraTinyLandscapePhone ? 52 : tinyLandscapePhone ? 56 : 60;
@@ -685,9 +741,9 @@ export class QuestionPresenter {
     if (isSpelling) {
       this.layoutSpellingUI(tinyLandscapePhone, ultraTinyLandscapePhone, {
         baseX: 0,
-        clueY: ultraTinyLandscapePhone ? this.panel.height * 0.08 : this.panel.height * 0.09,
-        slotY: ultraTinyLandscapePhone ? this.panel.height * 0.14 : this.panel.height * 0.15,
-        tilesStartY: ultraTinyLandscapePhone ? this.panel.height * 0.2 : this.panel.height * 0.22,
+        clueY: ultraTinyLandscapePhone ? this.panel.height * 0.11 : this.panel.height * 0.13,
+        slotY: ultraTinyLandscapePhone ? this.panel.height * 0.17 : this.panel.height * 0.19,
+        tilesStartY: ultraTinyLandscapePhone ? this.panel.height * 0.26 : this.panel.height * 0.28,
         utilY: controlsY,
       });
       return;
@@ -724,7 +780,7 @@ export class QuestionPresenter {
         : -this.panel.height * 0.04
       : this.panel.height * 0.15;
     this.spellingClueText.setPosition(baseX, clueY);
-    this.spellingClueText.setFontSize(compact ? (tinyLandscapePhone ? 24 : 30) : 34);
+    this.spellingClueText.setFontSize(compact ? (tinyLandscapePhone ? 26 : 30) : 34);
     this.spellingClueText.setVisible(this.questionMode === "spelling");
 
     const slotY = Number.isFinite(customLayout.slotY) ? customLayout.slotY : clueY + (compact ? 54 : 60);
@@ -741,7 +797,7 @@ export class QuestionPresenter {
 
     const cols = compact ? (this.spellingTiles.length > 8 ? 5 : 4) : this.spellingTiles.length > 8 ? 5 : 4;
     const tileGapX = compact ? (cols === 5 ? 56 : 66) : cols === 5 ? 68 : 86;
-    const tileGapY = compact ? 46 : 64;
+    const tileGapY = compact ? 44 : 64;
     const tilesStartX = baseX - ((cols - 1) * tileGapX) / 2;
     let tilesStartY = Number.isFinite(customLayout.tilesStartY)
       ? customLayout.tilesStartY
@@ -770,12 +826,12 @@ export class QuestionPresenter {
       this.backButton.setPosition(backX, utilY);
       this.backLabel.setPosition(backX, utilY);
 
-      this.replayButton.setSize(compact ? 74 : 92, compact ? 28 : 34);
-      this.hintButton.setSize(compact ? 74 : 92, compact ? 28 : 34);
-      this.backButton.setSize(compact ? 74 : 92, compact ? 28 : 34);
-      this.replayLabel.setFontSize(compact ? 13 : 15);
-      this.hintLabel.setFontSize(compact ? 13 : 15);
-      this.backLabel.setFontSize(compact ? 13 : 15);
+      this.replayButton.setSize(compact ? 82 : 92, compact ? 30 : 34);
+      this.hintButton.setSize(compact ? 82 : 92, compact ? 30 : 34);
+      this.backButton.setSize(compact ? 82 : 92, compact ? 30 : 34);
+      this.replayLabel.setFontSize(compact ? 14 : 15);
+      this.hintLabel.setFontSize(compact ? 14 : 15);
+      this.backLabel.setFontSize(compact ? 14 : 15);
 
       // Keep letter tiles above the controls row.
       const bottomControlsY = utilY;
