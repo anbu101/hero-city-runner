@@ -99,6 +99,9 @@ export class QuestionPresenter {
       .setStrokeStyle(2, 0x1b5e20, 0.9);
     this.characterSlot.add([this.characterShadow, this.characterGroundTop, this.characterGround]);
     this.spellingLayer = scene.add.container(0, 0).setVisible(false);
+    this.spellingClueBox = scene.add
+      .rectangle(0, 0, 320, 44, 0x10243c, 0.96)
+      .setStrokeStyle(3, 0xffe082, 0.95);
     this.spellingClueText = scene.add
       .text(0, 0, "", {
         fontSize: "34px",
@@ -128,7 +131,14 @@ export class QuestionPresenter {
         fontStyle: "bold",
       })
       .setOrigin(0.5);
-    this.spellingLayer.add([this.spellingClueText, this.hintButton, this.hintLabel, this.backButton, this.backLabel]);
+    this.spellingLayer.add([
+      this.spellingClueBox,
+      this.spellingClueText,
+      this.hintButton,
+      this.hintLabel,
+      this.backButton,
+      this.backLabel,
+    ]);
 
     this.card.add([
       this.panel,
@@ -782,6 +792,12 @@ export class QuestionPresenter {
     this.spellingClueText.setPosition(baseX, clueY);
     this.spellingClueText.setFontSize(compact ? (tinyLandscapePhone ? 26 : 30) : 34);
     this.spellingClueText.setVisible(this.questionMode === "spelling");
+    this.spellingClueBox.setPosition(baseX, clueY);
+    this.spellingClueBox.setSize(
+      compact ? Math.min(this.panel.width * 0.74, 320) : Math.min(this.panel.width * 0.38, 340),
+      compact ? 42 : 48
+    );
+    this.spellingClueBox.setVisible(this.questionMode === "spelling");
 
     const slotY = Number.isFinite(customLayout.slotY) ? customLayout.slotY : clueY + (compact ? 54 : 60);
     const gap = compact ? 42 : 58;

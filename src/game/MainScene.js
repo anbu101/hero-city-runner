@@ -263,6 +263,7 @@ export default class MainScene extends Phaser.Scene {
     this.createLevelSelectUI(width);
     this.refreshHudTypography();
     this.updateHudTexts();
+    this.refreshMobileHudVisibility();
     this.createBuildProjectUI(width, height);
 
     this.createRoundWinUI(width, height);
@@ -844,6 +845,14 @@ export default class MainScene extends Phaser.Scene {
     this.showtimeText.setPosition(14, compact ? 84 : 132);
   }
 
+  refreshMobileHudVisibility() {
+    const compact = this.getCompactMobileLayout();
+    const shouldShowExtendedHud = !compact && !this.questionFocusHidden;
+    this.levelChipContainer?.setVisible(shouldShowExtendedHud);
+    this.modeControl?.setVisible(shouldShowExtendedHud);
+    this.audioToggleBar?.setVisible(shouldShowExtendedHud);
+  }
+
   togglePause() {
     if (this.state === "roundWin") return;
     if (!this.isPaused) {
@@ -903,6 +912,7 @@ export default class MainScene extends Phaser.Scene {
     this.spawnCoin();
     this.refreshLevelChipStates();
     this.refreshHudTypography();
+    this.refreshMobileHudVisibility();
     this.saveProgress();
   }
 
@@ -2085,6 +2095,7 @@ export default class MainScene extends Phaser.Scene {
     if (this.questionFocusHidden) {
       this.setQuestionFocusMode(true);
     }
+    this.refreshMobileHudVisibility();
 
     if (this.winOverlay && this.winCard) {
       this.winOverlay.setPosition(width / 2, height / 2);
@@ -2129,16 +2140,14 @@ export default class MainScene extends Phaser.Scene {
       this.streakText,
       this.badgeText,
       this.showtimeText,
-      this.modeControl,
       this.controlBar,
-      this.audioToggleBar,
-      this.levelChipContainer,
     ].forEach((node) => node?.setVisible?.(visible));
 
     this.runnerRig?.container?.setVisible?.(visible);
     this.buildSite?.container?.setVisible?.(visible);
     this.obstacle?.setVisible?.(visible);
     this.coin?.setVisible?.(visible);
+    this.refreshMobileHudVisibility();
   }
 
   handleOptionTap(option) {
