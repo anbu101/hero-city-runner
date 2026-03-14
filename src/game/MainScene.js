@@ -266,6 +266,7 @@ export default class MainScene extends Phaser.Scene {
     this.createBuildProjectUI(width, height);
 
     this.createRoundWinUI(width, height);
+    this.questionFocusHidden = false;
 
     this.input.on("pointerdown", (pointer) => {
       const now = this.time?.now ?? performance.now();
@@ -1934,6 +1935,7 @@ export default class MainScene extends Phaser.Scene {
 
     this.state = "question";
     this.syncBackgroundMusic();
+    this.setQuestionFocusMode(true);
 
     if (this.obstacle) this.obstacle.setVelocityX(0);
     if (this.coin) this.coin.setVelocityX(0);
@@ -2088,6 +2090,10 @@ export default class MainScene extends Phaser.Scene {
       this.questionUI.relayout(width, height);
     }
 
+    if (this.questionFocusHidden) {
+      this.setQuestionFocusMode(true);
+    }
+
     if (this.winOverlay && this.winCard) {
       this.winOverlay.setPosition(width / 2, height / 2);
       this.winOverlay.width = width;
@@ -2116,7 +2122,31 @@ export default class MainScene extends Phaser.Scene {
 
   hideQuestion() {
     this.audio.stopActionCueLoop();
+    this.setQuestionFocusMode(false);
     this.questionUI.hide();
+  }
+
+  setQuestionFocusMode(active) {
+    const compact = this.getCompactMobileLayout();
+    if (!compact) return;
+    this.questionFocusHidden = active;
+    const visible = !active;
+
+    [
+      this.coinText,
+      this.streakText,
+      this.badgeText,
+      this.showtimeText,
+      this.modeControl,
+      this.controlBar,
+      this.audioToggleBar,
+      this.levelChipContainer,
+    ].forEach((node) => node?.setVisible?.(visible));
+
+    this.runnerRig?.container?.setVisible?.(visible);
+    this.buildSite?.container?.setVisible?.(visible);
+    this.obstacle?.setVisible?.(visible);
+    this.coin?.setVisible?.(visible);
   }
 
   handleOptionTap(option) {
