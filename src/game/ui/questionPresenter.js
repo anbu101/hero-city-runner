@@ -608,84 +608,7 @@ export class QuestionPresenter {
     this.replayLabel.setFontSize(compactLayout ? 14 : 18);
 
     if (compactLayout) {
-      this.characterSlot.setPosition(
-        isSpelling ? -this.panel.width * 0.31 : -this.panel.width * 0.3,
-        isSpelling
-          ? ultraTinyLandscapePhone
-            ? -this.panel.height * 0.2
-            : tinyLandscapePhone
-              ? -this.panel.height * 0.19
-              : -this.panel.height * 0.16
-          : ultraTinyLandscapePhone
-            ? -this.panel.height * 0.12
-            : tinyLandscapePhone
-              ? -this.panel.height * 0.1
-              : -this.panel.height * 0.06
-      );
-      this.characterGroundY = ultraTinyLandscapePhone ? 60 : tinyLandscapePhone ? 64 : 70;
-      this.characterShadow.setPosition(0, this.characterGroundY - 7).setSize(108, 16);
-      this.characterGroundTop.setPosition(0, this.characterGroundY).setSize(226, 7);
-      this.characterGround.setPosition(0, this.characterGroundY + 10).setSize(236, 20);
-      const sentenceY = isSpelling
-        ? ultraTinyLandscapePhone
-          ? this.panel.height * 0.04
-          : tinyLandscapePhone
-            ? this.panel.height * 0.04
-            : this.panel.height * 0.08
-        : ultraTinyLandscapePhone
-          ? -this.panel.height * 0.24
-          : tinyLandscapePhone
-            ? -this.panel.height * 0.2
-            : -this.panel.height * 0.17;
-      this.sentenceText.setPosition(
-        isSpelling ? -this.panel.width * 0.18 : this.panel.width * 0.19,
-        sentenceY
-      );
-      this.sentenceText.setFontSize(ultraTinyLandscapePhone ? 24 : tinyLandscapePhone ? 27 : 30);
-      this.sentenceText.setWordWrapWidth(isSpelling ? this.panel.width * 0.36 : this.panel.width * 0.5);
-
-      this.instructionText.setPosition(
-        isSpelling ? -this.panel.width * 0.18 : this.panel.width * 0.19,
-        ultraTinyLandscapePhone ? -this.panel.height * 0.15 : tinyLandscapePhone ? -this.panel.height * 0.15 : -this.panel.height * 0.1
-      );
-      this.instructionText.setFontSize(ultraTinyLandscapePhone ? 12 : tinyLandscapePhone ? 13 : 14);
-      this.instructionText.setWordWrapWidth(isSpelling ? this.panel.width * 0.36 : this.panel.width * 0.5);
-
-      const rightZoneWidth = this.panel.width * 0.5;
-      const buttonWidth = ultraTinyLandscapePhone
-        ? Phaser.Math.Clamp(rightZoneWidth * 0.88, 200, 250)
-        : tinyLandscapePhone
-          ? Phaser.Math.Clamp(rightZoneWidth * 0.9, 210, 260)
-          : Phaser.Math.Clamp(rightZoneWidth * 0.9, 220, 280);
-      const buttonHeight = ultraTinyLandscapePhone ? 48 : tinyLandscapePhone ? 52 : 62;
-      const step = ultraTinyLandscapePhone ? 54 : tinyLandscapePhone ? 58 : 68;
-      const marginBottom = ultraTinyLandscapePhone ? 14 : 16;
-      const firstY = this.panel.height / 2 - marginBottom - step * 2;
-      const optionX = this.panel.width * 0.2;
-
-      this.optionEntries.forEach((entry, idx) => {
-        entry.bg.setSize(buttonWidth, buttonHeight);
-        entry.bg.setDisplaySize(buttonWidth, buttonHeight);
-        entry.bg.setStrokeStyle(4, 0x2c3e50);
-        entry.label.setFontSize(ultraTinyLandscapePhone ? 26 : tinyLandscapePhone ? 28 : 30);
-        entry.label.setWordWrapWidth(null);
-        entry.label.setPosition(0, 0);
-        entry.baseX = optionX;
-        entry.baseY = firstY + idx * step;
-        entry.container.setPosition(entry.baseX, entry.baseY);
-      });
-
-      const spellingLayout = isSpelling
-        ? {
-            baseX: this.panel.width * 0.21,
-            clueY: -this.panel.height * 0.24,
-            slotY: -this.panel.height * 0.08,
-            tilesStartY: this.panel.height * 0.12,
-            utilY: this.panel.height * 0.34,
-          }
-        : {};
-      this.layoutSpellingUI(tinyLandscapePhone, ultraTinyLandscapePhone, spellingLayout);
-
+      this.layoutCompactMobile(tinyLandscapePhone, ultraTinyLandscapePhone, isSpelling);
       this.alignCharacterToGround();
       return;
     }
@@ -735,6 +658,61 @@ export class QuestionPresenter {
     this.alignCharacterToGround();
   }
 
+  layoutCompactMobile(tinyLandscapePhone, ultraTinyLandscapePhone, isSpelling) {
+    const topY = ultraTinyLandscapePhone ? -this.panel.height * 0.28 : -this.panel.height * 0.26;
+    const sentenceY = ultraTinyLandscapePhone ? -this.panel.height * 0.02 : this.panel.height * 0.01;
+    const controlsY = this.panel.height * 0.36;
+
+    this.characterSlot.setPosition(0, topY);
+    this.characterGroundY = ultraTinyLandscapePhone ? 52 : tinyLandscapePhone ? 56 : 60;
+    this.characterShadow.setPosition(0, this.characterGroundY - 6).setSize(94, 14);
+    this.characterGroundTop.setPosition(0, this.characterGroundY).setSize(180, 6);
+    this.characterGround.setPosition(0, this.characterGroundY + 9).setSize(188, 18);
+
+    this.sentenceText.setPosition(0, sentenceY);
+    this.sentenceText.setFontSize(ultraTinyLandscapePhone ? 24 : 28);
+    this.sentenceText.setWordWrapWidth(this.panel.width * 0.82);
+
+    this.instructionText.setPosition(0, sentenceY + 34);
+    this.instructionText.setFontSize(12);
+    this.instructionText.setWordWrapWidth(this.panel.width * 0.82);
+
+    this.replayButton.setPosition(this.panel.width * 0.29, ultraTinyLandscapePhone ? -this.panel.height * 0.34 : -this.panel.height * 0.36);
+    this.replayLabel.setPosition(this.replayButton.x, this.replayButton.y);
+    this.replayButton.setSize(78, 30);
+    this.replayLabel.setFontSize(13);
+
+    if (isSpelling) {
+      this.layoutSpellingUI(tinyLandscapePhone, ultraTinyLandscapePhone, {
+        baseX: 0,
+        clueY: ultraTinyLandscapePhone ? this.panel.height * 0.08 : this.panel.height * 0.09,
+        slotY: ultraTinyLandscapePhone ? this.panel.height * 0.14 : this.panel.height * 0.15,
+        tilesStartY: ultraTinyLandscapePhone ? this.panel.height * 0.2 : this.panel.height * 0.22,
+        utilY: controlsY,
+      });
+      return;
+    }
+
+    const buttonWidth = this.panel.width * 0.74;
+    const buttonHeight = ultraTinyLandscapePhone ? 42 : 46;
+    const step = ultraTinyLandscapePhone ? 48 : 54;
+    const firstY = this.panel.height * 0.15;
+
+    this.optionEntries.forEach((entry, idx) => {
+      entry.bg.setSize(buttonWidth, buttonHeight);
+      entry.bg.setDisplaySize(buttonWidth, buttonHeight);
+      entry.bg.setStrokeStyle(4, 0x2c3e50);
+      entry.label.setFontSize(ultraTinyLandscapePhone ? 24 : 26);
+      entry.label.setWordWrapWidth(buttonWidth - 24);
+      entry.label.setPosition(0, 0);
+      entry.baseX = 0;
+      entry.baseY = firstY + idx * step;
+      entry.container.setPosition(entry.baseX, entry.baseY);
+    });
+
+    this.layoutSpellingUI(tinyLandscapePhone, ultraTinyLandscapePhone, {});
+  }
+
   layoutSpellingUI(tinyLandscapePhone = false, ultraTinyLandscapePhone = false, customLayout = {}) {
     const compact = this.isMobileLayout;
     const baseX = Number.isFinite(customLayout.baseX) ? customLayout.baseX : compact ? this.panel.width * 0.17 : 0;
@@ -761,9 +739,9 @@ export class QuestionPresenter {
       slot.container.setVisible(false);
     });
 
-    const cols = compact ? 4 : this.spellingTiles.length > 8 ? 5 : 4;
-    const tileGapX = compact ? 72 : cols === 5 ? 68 : 86;
-    const tileGapY = compact ? 56 : 64;
+    const cols = compact ? (this.spellingTiles.length > 8 ? 5 : 4) : this.spellingTiles.length > 8 ? 5 : 4;
+    const tileGapX = compact ? (cols === 5 ? 56 : 66) : cols === 5 ? 68 : 86;
+    const tileGapY = compact ? 46 : 64;
     const tilesStartX = baseX - ((cols - 1) * tileGapX) / 2;
     let tilesStartY = Number.isFinite(customLayout.tilesStartY)
       ? customLayout.tilesStartY
@@ -792,9 +770,9 @@ export class QuestionPresenter {
       this.backButton.setPosition(backX, utilY);
       this.backLabel.setPosition(backX, utilY);
 
-      this.replayButton.setSize(compact ? 80 : 92, compact ? 30 : 34);
-      this.hintButton.setSize(compact ? 80 : 92, compact ? 30 : 34);
-      this.backButton.setSize(compact ? 80 : 92, compact ? 30 : 34);
+      this.replayButton.setSize(compact ? 74 : 92, compact ? 28 : 34);
+      this.hintButton.setSize(compact ? 74 : 92, compact ? 28 : 34);
+      this.backButton.setSize(compact ? 74 : 92, compact ? 28 : 34);
       this.replayLabel.setFontSize(compact ? 13 : 15);
       this.hintLabel.setFontSize(compact ? 13 : 15);
       this.backLabel.setFontSize(compact ? 13 : 15);
